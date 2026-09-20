@@ -34,16 +34,18 @@ const (
 var ErrOpenAICodexTicketUnavailable = errors.New("codex turn-state ticket unavailable")
 
 type openAICodexTicket struct {
-	AccountID             int64     `json:"account_id"`
-	Model                 string    `json:"model"`
-	State                 string    `json:"state"`
-	Length                int       `json:"length"`
-	CapturedAt            time.Time `json:"captured_at"`
-	ExpiresAt             time.Time `json:"expires_at"`
-	Attempts              int       `json:"attempts"`
-	Verified              bool      `json:"verified"`
-	ConfigRevision        string    `json:"config_revision"`
-	FixedProxyFingerprint string    `json:"fixed_proxy_fingerprint"`
+	AccountID      int64     `json:"account_id"`
+	Model          string    `json:"model"`
+	State          string    `json:"state"`
+	Length         int       `json:"length"`
+	CapturedAt     time.Time `json:"captured_at"`
+	ExpiresAt      time.Time `json:"expires_at"`
+	Attempts       int       `json:"attempts"`
+	Verified       bool      `json:"verified"`
+	ConfigRevision string    `json:"config_revision"`
+	// Keep the historical JSON name for existing account extras. The value is
+	// now an account identity fingerprint and never includes the business proxy.
+	FixedProxyFingerprint string `json:"fixed_proxy_fingerprint"`
 }
 
 func openAICodexTicketKey(accountID int64, model string) string {
@@ -153,7 +155,7 @@ func (t *openAICodexTicket) valid(now time.Time, _ int) bool {
 }
 func (t *openAICodexTicket) validFor(account *Account, ac codexAccountTicketConfig, now time.Time) bool {
 	return account != nil && ac.Enabled && t.valid(now, 0) && t.Length == codexTicketTargetLength(ac.TicketPlan) && t.AccountID == account.ID && t.Model == ac.Model &&
-		t.ConfigRevision == ac.Revision && t.FixedProxyFingerprint == codexTicketFixedProxyFingerprint(account)
+		t.ConfigRevision == ac.Revision && t.FixedProxyFingerprint == codexTicketAccountFingerprint(account)
 }
 func validCodexTicketState(state string) bool {
 	if len(state) < 32 || len(state) > 8192 || !strings.HasPrefix(state, openAICodexTicketStatePrefix) {
@@ -269,8 +271,8 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicketWithReceipt(ctx context.Con
 	if !isOpenAICodexTicketAccount(live) || !ac.Enabled || ac.Model != normalizeOpenAICodexTicketModel(model) {
 		return nil, nil
 	}
-	// A scheduler snapshot with a different business proxy must be reselected.
-	if codexTicketFixedProxyFingerprint(account) != codexTicketFixedProxyFingerprint(live) {
+	// A scheduler snapshot for a different account identity must be reselected.
+	if codexTicketAccountFingerprint(account) != codexTicketAccountFingerprint(live) {
 		return nil, ErrOpenAICodexTicketUnavailable
 	}
 	ticket := s.lookupOpenAICodexTicket(live, model)
@@ -365,7 +367,7 @@ func (s *OpenAIGatewayService) fireCodexAccountTicketProbe(ctx context.Context, 
 	// production account is bound to a plugin. This also avoids reading pluginManager
 	// while handlers are still wiring it during gateway construction.
 	var resp *http.Response
-	if injectedState == "" && s.openAICodexTicketConfig().HarvestDialProxyURL != "" {
+	if s.openAICodexTicketConfig().HarvestDialProxyURL != "" {
 		var client *http.Client
 		client, err = newCodexTicketChainedClient(proxyURL, s.openAICodexTicketConfig().HarvestDialProxyURL)
 		if err == nil {
@@ -443,7 +445,7 @@ func (s *OpenAIGatewayService) StartOpenAICodexTicketHarvester() {
 	logger.L().Info("openai_codex_ticket harvester started",
 		zap.Int("ttl_seconds", 3600),
 		zap.String("scope", "account_opt_in"),
-		zap.Bool("completed_model_and_fixed_proxy_validation", true),
+		zap.Bool("completed_model_and_state_proxy_validation", true),
 	)
 }
 

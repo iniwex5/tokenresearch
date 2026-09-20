@@ -10,7 +10,7 @@ vi.mock('@/api/admin/codexTickets', () => api)
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => `${key}${params ? JSON.stringify(params) : ''}`, locale: { value: 'zh-CN' } }) }))
 
 function makeStatus(overrides: Partial<CodexAccountTicketStatus> = {}): CodexAccountTicketStatus {
-  return { enabled: false, global_enabled: true, model: 'gpt-6-astra', ticket_plan: 'pro', target_length: 292, proxy_configured: false, proxy_display: '', fixed_proxy_configured: true, state: 'disabled', remaining_seconds: 0, last_error: '', attempts: 0, watchdog: { enabled: overrides.enabled === true && overrides.global_enabled !== false, trigger_count: 0 }, ...overrides }
+  return { enabled: false, global_enabled: true, model: 'gpt-6-astra', ticket_plan: 'pro', target_length: 292, proxy_configured: false, proxy_display: '', fixed_proxy_configured: false, state: 'disabled', remaining_seconds: 0, last_error: '', attempts: 0, watchdog: { enabled: overrides.enabled === true && overrides.global_enabled !== false, trigger_count: 0 }, ...overrides }
 }
 const selector = (part: string) => `[data-testid="codex-account-ticket-${part}"]`
 const wrappers: ReturnType<typeof mount>[] = []
@@ -160,7 +160,7 @@ describe('CodexAccountTicketSettings', () => {
     expect(api.harvestCodexAccountTicket).not.toHaveBeenCalled()
   })
 
-  it('acquires nonblocking and blocks repeat or stale-configuration requests', async () => {
+  it('acquires nonblocking and does not depend on account proxy changes', async () => {
     api.getCodexAccountTicket.mockResolvedValue(makeStatus({ enabled: true, proxy_configured: true, state: 'waiting' }))
     const wrapper = mountCard()
     await flushPromises()
@@ -170,10 +170,9 @@ describe('CodexAccountTicketSettings', () => {
     expect(api.harvestCodexAccountTicket).toHaveBeenCalledWith(4)
     expect(wrapper.get(selector('harvest')).attributes('disabled')).toBeDefined()
     expect(wrapper.get(selector('status')).text()).toContain('harvesting')
-    await wrapper.setProps({ proxyChanged: true })
     await wrapper.get(selector('enabled')).trigger('click')
-    expect(wrapper.get(selector('save')).attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain('fixedProxyUnsaved')
+    expect(wrapper.get(selector('save')).attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).not.toContain('fixedProxyUnsaved')
   })
 
   it('keeps an old ticket visibly usable while it is being renewed', async () => {

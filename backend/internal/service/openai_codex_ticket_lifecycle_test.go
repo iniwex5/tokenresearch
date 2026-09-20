@@ -41,7 +41,7 @@ func ticketJobService(t *testing.T, u HTTPUpstream) (*OpenAIGatewayService, *cod
 	t.Cleanup(s.StopOpenAICodexTicketHarvester)
 	return s, r
 }
-func TestCodexAccountTicketHarvestAndFixedReplay(t *testing.T) {
+func TestCodexAccountTicketHarvestAndGlobalReplay(t *testing.T) {
 	var calls atomic.Int64
 	var mu sync.Mutex
 	var urls []string
@@ -58,16 +58,19 @@ func TestCodexAccountTicketHarvestAndFixedReplay(t *testing.T) {
 		if req.Header.Get(openAICodexTurnStateHeader) == "" {
 			require.Contains(t, p, "us.1024proxy.io")
 		} else {
-			require.Equal(t, "http://fixed.example.com:8080", p)
+			require.Contains(t, p, "us.1024proxy.io")
 			require.Len(t, req.Header.Get(openAICodexTurnStateHeader), 292)
 		}
 		return codexTicketResponse(), nil
 	}}
 	s, r := ticketJobService(t, u)
+	r.accounts[0].ProxyID = nil
+	r.accounts[0].Proxy = nil
 	job := s.startCodexAccountTicketJob(context.Background(), 41, true)
 	waitCodexTicketJob(t, job)
 	require.Equal(t, int64(3), calls.Load())
 	require.NotEqual(t, urls[0], urls[1])
+	require.Equal(t, urls[1], urls[2], "harvest and replay must reuse one global proxy session")
 	a, _ := r.GetByID(context.Background(), 41)
 	ticket := s.lookupOpenAICodexTicket(a, openAICodexTicketDefaultModel)
 	require.NotNil(t, ticket)
@@ -83,7 +86,7 @@ func TestCodexAccountTicketHarvestAndFixedReplay(t *testing.T) {
 	restart.accountRepo = r
 	require.NotNil(t, restart.lookupOpenAICodexTicket(a, openAICodexTicketDefaultModel))
 }
-func TestCodexAccountTicketFixedProxyMismatchRejectsAndBoundsAttempts(t *testing.T) {
+func TestCodexAccountTicketGlobalReplayMismatchRejectsAndBoundsAttempts(t *testing.T) {
 	var calls atomic.Int64
 	u := &codexTicketFuncUpstream{do: func(req *http.Request) (*http.Response, error) {
 		calls.Add(1)
@@ -93,6 +96,8 @@ func TestCodexAccountTicketFixedProxyMismatchRejectsAndBoundsAttempts(t *testing
 		return codexTicketResponse(), nil
 	}}
 	s, r := ticketJobService(t, u)
+	r.accounts[0].ProxyID = nil
+	r.accounts[0].Proxy = nil
 	waitCodexTicketJob(t, s.startCodexAccountTicketJob(context.Background(), 41, true))
 	require.Equal(t, int64(16), calls.Load())
 	a, _ := r.GetByID(context.Background(), 41)
@@ -105,13 +110,13 @@ func TestCodexAccountTicketFixedProxyMismatchRejectsAndBoundsAttempts(t *testing
 	require.Equal(t, int64(16), calls.Load())
 }
 func TestCodexAccountTicketDisableDuringJobPreventsLatePublication(t *testing.T) {
-	for _, stage := range []string{"harvest", "fixed"} {
+	for _, stage := range []string{"harvest", "replay"} {
 		t.Run(stage, func(t *testing.T) {
 			started := make(chan struct{})
 			release := make(chan struct{})
 			var once sync.Once
 			s, r := ticketJobService(t, &codexTicketFuncUpstream{do: func(req *http.Request) (*http.Response, error) {
-				if (stage == "harvest" && req.Header.Get(openAICodexTurnStateHeader) == "") || (stage == "fixed" && req.Header.Get(openAICodexTurnStateHeader) != "") {
+				if (stage == "harvest" && req.Header.Get(openAICodexTurnStateHeader) == "") || (stage == "replay" && req.Header.Get(openAICodexTurnStateHeader) != "") {
 					once.Do(func() { close(started) })
 					<-release
 				}

@@ -43,10 +43,12 @@ func TestCodexAccountTicketGlobalPoolOverridesLegacyAccountProxy(t *testing.T) {
 			require.Contains(t, proxy, "global.example.com")
 			require.NotContains(t, proxy, "legacy.example.com")
 		} else {
-			require.Equal(t, "http://fixed.example.com:8080", proxy)
+			require.Contains(t, proxy, "global.example.com")
 		}
 		return codexTicketResponse(), nil
 	}})
+	repo.accounts[0].ProxyID = nil
+	repo.accounts[0].Proxy = nil
 	pool := &codexTicketGlobalPoolRepo{pool: "socks5h://global:secret@global.example.com:1080"}
 	s.settingService = NewSettingService(pool, s.cfg)
 	legacy := codexAccountTicketConfigOf(&repo.accounts[0])

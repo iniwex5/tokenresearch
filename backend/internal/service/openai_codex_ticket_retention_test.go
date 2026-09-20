@@ -16,7 +16,7 @@ import (
 
 func TestCodexAccountTicketRejectionStopsRoundAndRetainsSavedTicket(t *testing.T) {
 	for _, code := range []int{401, 403, 429} {
-		for _, stage := range []string{"harvest", "fixed"} {
+		for _, stage := range []string{"harvest", "replay"} {
 			t.Run(strconv.Itoa(code)+"-"+stage, func(t *testing.T) {
 				var calls atomic.Int64
 				started, release := make(chan struct{}), make(chan struct{})
@@ -57,7 +57,7 @@ func TestCodexAccountTicketRejectionStopsRoundAndRetainsSavedTicket(t *testing.T
 				close(release)
 				waitCodexTicketJob(t, job)
 				wantCalls := int64(1)
-				if stage == "fixed" {
+				if stage == "replay" {
 					wantCalls = 2
 				}
 				require.Equal(t, wantCalls, calls.Load(), "must not rotate exits after an upstream rejection")

@@ -81,15 +81,15 @@ type CodexAccountTicketStatus struct {
 }
 
 type codexAccountTicketJob struct {
-	revision         string
-	fixedFingerprint string
-	harvestProxyURL  string // Immutable global pool snapshot for this job; never returned to clients.
-	cancel           context.CancelFunc
-	done             chan struct{}
-	running          bool
-	attempts         int
-	lastError        string
-	retryAfter       time.Time
+	revision           string
+	accountFingerprint string
+	harvestProxyURL    string // Immutable global pool snapshot for this job; never returned to clients.
+	cancel             context.CancelFunc
+	done               chan struct{}
+	running            bool
+	attempts           int
+	lastError          string
+	retryAfter         time.Time
 }
 
 func codexAccountTicketConfigOf(account *Account) codexAccountTicketConfig {
@@ -121,14 +121,17 @@ func codexAccountTicketConfigOf(account *Account) codexAccountTicketConfig {
 }
 
 func codexAccountTicketEligible(account *Account) bool {
-	return isOpenAICodexTicketAccount(account) && account.Status == StatusActive && account.Proxy != nil && account.ProxyID != nil
+	return isOpenAICodexTicketAccount(account) && account.Status == StatusActive
 }
 
-func codexTicketFixedProxyFingerprint(account *Account) string {
-	if account == nil || account.Proxy == nil || account.ProxyID == nil {
+// codexTicketAccountFingerprint keeps the historical ticket JSON field name,
+// but deliberately excludes the account's ordinary business proxy. STATE
+// acquisition and replay use the global ticket proxy pool instead.
+func codexTicketAccountFingerprint(account *Account) string {
+	if account == nil {
 		return ""
 	}
-	raw := fmt.Sprintf("%d\x00%d\x00%s\x00%v", account.ID, *account.ProxyID, account.Proxy.URL(), account.Credentials["chatgpt_account_id"])
+	raw := fmt.Sprintf("%d\x00%v", account.ID, account.Credentials["chatgpt_account_id"])
 	digest := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(digest[:])
 }
@@ -192,7 +195,7 @@ func (s *OpenAIGatewayService) GetCodexAccountTicketStatus(ctx context.Context, 
 		status.ExpiresAt = &expiry
 	}
 	s.openaiCodexAccountMu.Lock()
-	if job := s.openaiCodexAccountJobs[id]; job != nil && job.revision == ac.Revision && job.harvestProxyURL == pool && job.fixedFingerprint == codexTicketFixedProxyFingerprint(account) {
+	if job := s.openaiCodexAccountJobs[id]; job != nil && job.revision == ac.Revision && job.harvestProxyURL == pool && job.accountFingerprint == codexTicketAccountFingerprint(account) {
 		status.Attempts = job.attempts
 		status.LastError = job.lastError
 		if job.running {
@@ -218,7 +221,7 @@ func (s *OpenAIGatewayService) GetCodexAccountTicketStatus(ctx context.Context, 
 		status.CapturedAt = nil
 		status.ExpiresAt = nil
 		status.RemainingSeconds = 0
-		status.LastError = "Account must be active and have a fixed business proxy"
+		status.LastError = "Account must be active"
 	}
 	return status, nil
 }
@@ -252,9 +255,9 @@ func (s *OpenAIGatewayService) ConfigureCodexAccountTicket(ctx context.Context, 
 		return nil, apperrors.BadRequest("CODEX_TICKET_GLOBAL_PROXY", "Configure the dynamic proxy pool in gateway settings, not per account")
 	}
 	pool := s.openAICodexTicketHarvestProxyURLContext(ctx)
-	if next.Enabled && (pool == "" || ValidateOpenAICodexTicketHarvestProxyURL(pool) != nil || account.Proxy == nil || account.ProxyID == nil) {
+	if next.Enabled && (pool == "" || ValidateOpenAICodexTicketHarvestProxyURL(pool) != nil) {
 		s.openaiCodexAccountMu.Unlock()
-		return nil, apperrors.BadRequest("CODEX_TICKET_PROXY_REQUIRED", "Configure the global dynamic proxy pool and this account's fixed business proxy first")
+		return nil, apperrors.BadRequest("CODEX_TICKET_PROXY_REQUIRED", "Configure the global dynamic proxy pool first")
 	}
 	// Retire stored account overrides without invalidating an otherwise valid ticket.
 	next.ProxyURL = ""
@@ -313,7 +316,7 @@ func (s *OpenAIGatewayService) HarvestCodexAccountTicket(ctx context.Context, id
 		return nil, apperrors.BadRequest("CODEX_TICKET_DISABLED", "Enable STATE tickets for this account first")
 	}
 	if !codexAccountTicketEligible(account) {
-		return nil, apperrors.BadRequest("CODEX_TICKET_ACCOUNT_INACTIVE", "Account must be active and have a fixed business proxy")
+		return nil, apperrors.BadRequest("CODEX_TICKET_ACCOUNT_INACTIVE", "Account must be active")
 	}
 	pool := s.openAICodexTicketHarvestProxyURLContext(ctx)
 	if pool == "" || ValidateOpenAICodexTicketHarvestProxyURL(pool) != nil {
@@ -358,7 +361,7 @@ func (s *OpenAIGatewayService) startCodexAccountTicketJob(ctx context.Context, i
 		s.openaiCodexAccountJobs = make(map[int64]*codexAccountTicketJob)
 	}
 	if job := s.openaiCodexAccountJobs[id]; job != nil {
-		if job.running && job.revision == ac.Revision && job.fixedFingerprint == codexTicketFixedProxyFingerprint(account) && job.harvestProxyURL == pool {
+		if job.running && job.revision == ac.Revision && job.accountFingerprint == codexTicketAccountFingerprint(account) && job.harvestProxyURL == pool {
 			return job
 		}
 		if job.running && job.cancel != nil {
@@ -376,7 +379,7 @@ func (s *OpenAIGatewayService) startCodexAccountTicketJob(ctx context.Context, i
 		parentCtx = context.WithoutCancel(ctx)
 	}
 	jobCtx, cancel := context.WithCancel(parentCtx)
-	job := &codexAccountTicketJob{revision: ac.Revision, fixedFingerprint: codexTicketFixedProxyFingerprint(account), harvestProxyURL: pool, cancel: cancel, done: make(chan struct{}), running: true}
+	job := &codexAccountTicketJob{revision: ac.Revision, accountFingerprint: codexTicketAccountFingerprint(account), harvestProxyURL: pool, cancel: cancel, done: make(chan struct{}), running: true}
 	s.openaiCodexAccountJobs[id] = job
 	s.openaiCodexAccountWG.Add(1)
 	go func() {
@@ -414,7 +417,7 @@ func (s *OpenAIGatewayService) runCodexAccountTicketJob(ctx context.Context, id 
 			return
 		}
 		ac := codexAccountTicketConfigOf(account)
-		if !codexAccountTicketEligible(account) || !ac.Enabled || ac.Revision != job.revision || codexTicketFixedProxyFingerprint(account) != job.fixedFingerprint || s.openAICodexTicketHarvestProxyURLContext(ctx) != job.harvestProxyURL {
+		if !codexAccountTicketEligible(account) || !ac.Enabled || ac.Revision != job.revision || codexTicketAccountFingerprint(account) != job.accountFingerprint || s.openAICodexTicketHarvestProxyURLContext(ctx) != job.harvestProxyURL {
 			return
 		}
 		// Token helpers are permitted to update metadata, but not shared account maps.
@@ -442,7 +445,7 @@ func (s *OpenAIGatewayService) runCodexAccountTicketJob(ctx context.Context, id 
 			if ctx.Err() != nil || !s.openAICodexTicketEnabledContext(ctx) || s.openAICodexTicketHarvestProxyURLContext(ctx) != job.harvestProxyURL {
 				return
 			}
-			replayState, status, err := s.fireCodexAccountTicketProbe(ctx, account, token, ac.Model, account.Proxy.URL(), state, timeout)
+			replayState, status, err := s.fireCodexAccountTicketProbe(ctx, account, token, ac.Model, harvestProxy, state, timeout)
 			if reason := codexTicketProbeRejection(status); reason != "" {
 				lastError = reason
 				return
@@ -451,9 +454,9 @@ func (s *OpenAIGatewayService) runCodexAccountTicketJob(ctx context.Context, id 
 				// Serialize against account opt-out/source changes; reread persistent values immediately before publication.
 				s.openaiCodexAccountMu.Lock()
 				live, readErr := s.codexTicketAccountByID(ctx, id)
-				if readErr == nil && ctx.Err() == nil && s.openaiCodexAccountJobs[id] == job && s.openAICodexTicketEnabledContext(ctx) && s.openAICodexTicketHarvestProxyURLContext(ctx) == job.harvestProxyURL && codexAccountTicketEligible(live) && codexAccountTicketConfigOf(live).Enabled && codexAccountTicketConfigOf(live).Revision == job.revision && codexTicketFixedProxyFingerprint(live) == job.fixedFingerprint {
+				if readErr == nil && ctx.Err() == nil && s.openaiCodexAccountJobs[id] == job && s.openAICodexTicketEnabledContext(ctx) && s.openAICodexTicketHarvestProxyURLContext(ctx) == job.harvestProxyURL && codexAccountTicketEligible(live) && codexAccountTicketConfigOf(live).Enabled && codexAccountTicketConfigOf(live).Revision == job.revision && codexTicketAccountFingerprint(live) == job.accountFingerprint {
 					now := time.Now()
-					ticket := &openAICodexTicket{AccountID: id, Model: ac.Model, State: state, Length: len(state), CapturedAt: now, ExpiresAt: now.Add(time.Hour), Attempts: attempt, Verified: true, ConfigRevision: job.revision, FixedProxyFingerprint: job.fixedFingerprint}
+					ticket := &openAICodexTicket{AccountID: id, Model: ac.Model, State: state, Length: len(state), CapturedAt: now, ExpiresAt: now.Add(time.Hour), Attempts: attempt, Verified: true, ConfigRevision: job.revision, FixedProxyFingerprint: job.accountFingerprint}
 					s.storeOpenAICodexTicket(ctx, live, ticket)
 					if got := s.lookupOpenAICodexTicket(live, ac.Model); got != nil && got.CapturedAt.Equal(now) {
 						lastError = ""
@@ -464,7 +467,7 @@ func (s *OpenAIGatewayService) runCodexAccountTicketJob(ctx context.Context, id 
 				s.openaiCodexAccountMu.Unlock()
 				return
 			}
-			lastError = "STATE did not preserve the target model on this account's fixed proxy"
+			lastError = "STATE did not preserve the target model on the global STATE proxy"
 		}
 		if attempt < codexTicketMaxAttempts {
 			timer := time.NewTimer(time.Second)

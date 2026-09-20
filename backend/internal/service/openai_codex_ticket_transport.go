@@ -1,7 +1,8 @@
 package service
 
 // The optional outer HTTP CONNECT proxy is an operator startup setting. It applies
-// only to dynamic harvesting and never changes an account's business proxy.
+// to requests routed through the global STATE proxy and never changes an account's
+// ordinary business proxy.
 import (
 	"bufio"
 	"context"

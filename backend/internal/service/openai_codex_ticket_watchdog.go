@@ -43,12 +43,12 @@ func codexTicketWatchdogStatusOf(account *Account, enabled bool) CodexTicketWatc
 // Bound at the exact injection point. Client-supplied headers cannot opt a
 // request into the watchdog, and an old response cannot revoke a newer ticket.
 type codexTicketReceipt struct {
-	accountID        int64
-	model            string
-	revision         string
-	fixedFingerprint string
-	stateHash        [32]byte
-	capturedAt       time.Time
+	accountID          int64
+	model              string
+	revision           string
+	accountFingerprint string
+	stateHash          [32]byte
+	capturedAt         time.Time
 }
 
 type codexTicketReceiptContextKey struct{}
@@ -64,7 +64,7 @@ func (r codexTicketReceipt) matches(ticket *openAICodexTicket) bool {
 	}
 	other := receiptForCodexTicket(ticket)
 	return r.accountID == other.accountID && r.model == other.model && r.revision == other.revision &&
-		r.fixedFingerprint == other.fixedFingerprint && r.stateHash == other.stateHash && r.capturedAt.Equal(other.capturedAt)
+		r.accountFingerprint == other.accountFingerprint && r.stateHash == other.stateHash && r.capturedAt.Equal(other.capturedAt)
 }
 
 func (s *OpenAIGatewayService) codexTicketRejectedByWatchdog(ticket *openAICodexTicket) bool {

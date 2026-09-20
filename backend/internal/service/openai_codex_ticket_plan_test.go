@@ -77,7 +77,7 @@ func TestCodexAccountTicketPlanChangeInvalidatesTicketAndJob(t *testing.T) {
 	require.False(t, teamTicket.validFor(live, ac, time.Now()))
 }
 
-func TestCodexAccountTicketHarvestEnforcesManualPlanBeforeFixedReplay(t *testing.T) {
+func TestCodexAccountTicketHarvestEnforcesManualPlanBeforeGlobalReplay(t *testing.T) {
 	for _, tc := range []struct {
 		plan        string
 		wrong, want int
@@ -98,7 +98,7 @@ func TestCodexAccountTicketHarvestEnforcesManualPlanBeforeFixedReplay(t *testing
 				} else {
 					require.Equal(t, int64(3), n)
 					require.Len(t, req.Header.Get(openAICodexTurnStateHeader), tc.want)
-					require.Equal(t, "http://fixed.example.com:8080", proxy)
+					require.Contains(t, proxy, "us.1024proxy.io")
 				}
 				return response, nil
 			}}

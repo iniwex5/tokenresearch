@@ -1655,7 +1655,6 @@
         v-if="account.platform === 'openai' && (account.type === 'oauth' || account.type === 'setup-token') && !isSparkShadow"
         :account-id="account.id"
         :visible="show"
-        :proxy-changed="form.proxy_id !== account.proxy_id"
       />
 
       <UpstreamRequestIdHeaderField

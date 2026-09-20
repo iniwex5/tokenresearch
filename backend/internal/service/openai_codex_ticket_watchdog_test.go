@@ -63,7 +63,7 @@ func TestCodexTicketWatchdogResponseRecoversWithoutReplayingBusiness(t *testing.
 			s.openaiCodexAccountMu.Unlock()
 			waitCodexTicketJob(t, job)
 			require.Equal(t, int64(1), business.Load())
-			require.Equal(t, int64(2), probes.Load(), "only harvest + original fixed-proxy replay")
+			require.Equal(t, int64(2), probes.Load(), "only harvest + original global-proxy replay")
 			status, err := s.GetCodexAccountTicketStatus(context.Background(), 41)
 			require.NoError(t, err)
 			require.Equal(t, "ready", status.State)

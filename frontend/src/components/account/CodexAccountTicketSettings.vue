@@ -58,13 +58,12 @@
         </p>
       </div>
       <p v-if="status.last_error" class="break-words text-xs text-amber-700 dark:text-amber-300" data-testid="codex-account-ticket-error">{{ status.last_error }}</p>
-      <p v-if="proxyChanged" class="text-xs text-amber-700 dark:text-amber-300">{{ t('admin.accounts.stateTicket.fixedProxyUnsaved') }}</p>
-      <p v-else-if="dirty" class="text-xs text-gray-500">{{ t('admin.accounts.stateTicket.unsaved') }}</p>
+      <p v-if="dirty" class="text-xs text-gray-500">{{ t('admin.accounts.stateTicket.unsaved') }}</p>
       <div class="flex flex-wrap gap-2">
-        <button type="button" class="btn btn-primary btn-sm" :disabled="busy || !dirty || proxyChanged || (enabled && !status.proxy_configured)" data-testid="codex-account-ticket-save" @click="save">
+        <button type="button" class="btn btn-primary btn-sm" :disabled="busy || !dirty || (enabled && !status.proxy_configured)" data-testid="codex-account-ticket-save" @click="save">
           {{ t('admin.accounts.stateTicket.save') }}
         </button>
-        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || dirty || proxyChanged || !status.global_enabled || !status.enabled || !status.proxy_configured || status.state === 'harvesting'" data-testid="codex-account-ticket-harvest" @click="harvest">
+        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || dirty || !status.global_enabled || !status.enabled || !status.proxy_configured || status.state === 'harvesting'" data-testid="codex-account-ticket-harvest" @click="harvest">
           {{ status.state === 'ready' ? t('admin.accounts.stateTicket.reacquire') : t('admin.accounts.stateTicket.acquire') }}
         </button>
       </div>
@@ -82,7 +81,7 @@ import { useI18n } from 'vue-i18n'
 import Toggle from '@/components/common/Toggle.vue'
 import { getCodexAccountTicket, saveCodexAccountTicket, harvestCodexAccountTicket, type CodexAccountTicketStatus, type CodexTicketPlan } from '@/api/admin/codexTickets'
 
-const props = defineProps<{ accountId: number; visible: boolean; proxyChanged?: boolean }>()
+const props = defineProps<{ accountId: number; visible: boolean }>()
 const { t, locale } = useI18n()
 const status = ref<CodexAccountTicketStatus | null>(null)
 const enabled = ref(false)
@@ -165,7 +164,7 @@ function schedulePoll() {
 }
 
 async function save() {
-  if (!status.value || busy.value || props.proxyChanged) return
+  if (!status.value || busy.value) return
   busy.value = true
   saved.value = false
   error.value = ''
@@ -190,7 +189,7 @@ async function save() {
 }
 
 async function harvest() {
-  if (busy.value || dirty.value || props.proxyChanged || !status.value?.global_enabled || !status.value.enabled) return
+  if (busy.value || dirty.value || !status.value?.global_enabled || !status.value.enabled) return
   busy.value = true
   saved.value = false
   error.value = ''

@@ -33,7 +33,7 @@ func ticketTestService(t *testing.T, cfg config.OpenAICodexTicketConfig, upstrea
 func verifiedTestTicket(account *Account, n int) *openAICodexTicket {
 	ac := codexAccountTicketConfigOf(account)
 	now := time.Now()
-	return &openAICodexTicket{AccountID: account.ID, Model: ac.Model, State: fakeCodexTicketState(n), Length: n, CapturedAt: now, ExpiresAt: now.Add(time.Hour), Verified: true, ConfigRevision: ac.Revision, FixedProxyFingerprint: codexTicketFixedProxyFingerprint(account)}
+	return &openAICodexTicket{AccountID: account.ID, Model: ac.Model, State: fakeCodexTicketState(n), Length: n, CapturedAt: now, ExpiresAt: now.Add(time.Hour), Verified: true, ConfigRevision: ac.Revision, FixedProxyFingerprint: codexTicketAccountFingerprint(account)}
 }
 func codexModelResponse(model string) *http.Response {
 	header := http.Header{}
@@ -138,8 +138,36 @@ func TestCodexAccountTicketVerifiedBindingAndLength(t *testing.T) {
 		require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, "gpt-5.6-sol", http.Header{}))
 	}
 }
+func TestCodexAccountTicketEnableDoesNotRequireBusinessProxy(t *testing.T) {
+	account := ticketTestAccount(41)
+	account.ProxyID = nil
+	account.Proxy = nil
+	ac := codexAccountTicketConfigOf(account)
+	ac.Enabled = false
+	account.Extra[codexAccountTicketConfigKey] = ac
+	repo := &codexTicketRefreshRepo{accounts: []Account{*account}}
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: false}, nil)
+	svc.accountRepo = repo
+	status, err := svc.ConfigureCodexAccountTicket(context.Background(), 41, CodexAccountTicketUpdate{Enabled: true})
+	require.NoError(t, err)
+	require.True(t, status.Enabled)
+	require.False(t, status.FixedProxyConfigured)
+	require.Equal(t, "global_disabled", status.State)
+}
+
+func TestCodexAccountTicketBusinessProxyChangeDoesNotInvalidateTicket(t *testing.T) {
+	account := ticketTestAccount(41)
+	ticket := verifiedTestTicket(account, 292)
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, nil)
+	svc.storeOpenAICodexTicket(context.Background(), account, ticket)
+	proxyID := int64(8)
+	account.ProxyID = &proxyID
+	account.Proxy = &Proxy{ID: 8, Protocol: "http", Host: "other.example.com", Port: 8080}
+	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, ticket.Model, http.Header{}))
+}
+
 func TestCodexAccountTicketRejectsLegacyAndChangedBinding(t *testing.T) {
-	for _, change := range []string{"unverified", "revision", "proxy", "account", "model", "expired", "invalid state"} {
+	for _, change := range []string{"unverified", "revision", "fingerprint", "account", "identity", "model", "expired", "invalid state"} {
 		t.Run(change, func(t *testing.T) {
 			account := ticketTestAccount(41)
 			ticket := verifiedTestTicket(account, 292)
@@ -148,10 +176,12 @@ func TestCodexAccountTicketRejectsLegacyAndChangedBinding(t *testing.T) {
 				ticket.Verified = false
 			case "revision":
 				ticket.ConfigRevision = "old"
-			case "proxy":
+			case "fingerprint":
 				ticket.FixedProxyFingerprint = "old"
 			case "account":
 				ticket.AccountID = 42
+			case "identity":
+				account.Credentials["chatgpt_account_id"] = "different-account"
 			case "model":
 				ticket.Model = "gpt-5.6-sol"
 			case "expired":
